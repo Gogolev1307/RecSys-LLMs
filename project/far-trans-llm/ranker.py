@@ -116,16 +116,17 @@ def append_record(path, record):
         stream.write(json.dumps(record, ensure_ascii=False) + '\n')
 
 
-def run(args, bundle, generator=None):
+def run(args, bundle, generator=None, *, prompt_builder=build_prompt, method='llmrank',
+        adaptation='sequential_recency_only', score_results=True):
     starter, assets, history, _truth, contexts, _baseline, events, _pop, manifest = bundle
     if args.history_events < 1:
         raise ValueError('history-events must be positive')
     args.output_dir.mkdir(parents=True, exist_ok=True)
     prompts = []
     for uid in manifest['users']:
-        prompts.append((uid, build_prompt(contexts[uid], assets, history.get(uid, {}),
-                                         events.get(uid, ()), args.history_events,
-                                         args.shuffle_seed)))
+        prompts.append((uid, prompt_builder(contexts[uid], assets, history.get(uid, {}),
+                                            events.get(uid, ()), args.history_events,
+                                            args.shuffle_seed)))
     if args.prepare_only:
         # Distinct staging artifact: no metrics, predictions, or model calls.
         path = args.output_dir / 'ranker_prompts.jsonl'
@@ -137,7 +138,9 @@ def run(args, bundle, generator=None):
     if generator is None:
         from runtime import LocalGenerator, LoggedGenerator
         generator = LoggedGenerator(LocalGenerator(args.model, args.revision, args.device,
-                                                   args.allow_download), args.output_dir)
+                                                    args.allow_download,
+                                                    cuda_dtype=getattr(args, 'cuda_dtype', 'bfloat16')),
+                                    args.output_dir)
     predictions, failures = {}, []
     current_records = []
     invalid_count = repair_count = 0
@@ -162,10 +165,11 @@ def run(args, bundle, generator=None):
                 append_record(args.output_dir / 'ranker_responses.jsonl', record)
                 raise ValueError(f'{uid}: invalid ranker output: {exc}') from exc
             ranking = ids[:10]
-        record.update(raw_invalid_count=invalid_count, parse_repair_count=repair_count)
+        record.update(raw_invalid_count=invalid_count, parse_repair_count=repair_count,
+                      ranked_ids=ranking)
         append_record(args.output_dir / 'ranker_responses.jsonl', record)
         current_records.append(record)
-        predictions[uid] = {'llmrank': ranking, 'candidate_order_first10': ids[:10]}
+        predictions[uid] = {method: ranking, 'candidate_order_first10': ids[:10]}
     # The history remains append-only across resumed passes. Publish only this
     # completed pass, already in manifest order, as the canonical response artifact.
     with (args.output_dir / 'final_responses.jsonl').open('w', encoding='utf-8') as stream:
@@ -173,10 +177,11 @@ def run(args, bundle, generator=None):
             stream.write(json.dumps(record, ensure_ascii=False) + '\n')
     metadata = dict(generator.metadata, raw_invalid_count=invalid_count,
                     parse_repair_count=repair_count, shuffle_seed=args.shuffle_seed,
-                    history_events=args.history_events, adaptation='sequential_recency_only',
+                    history_events=args.history_events, adaptation=adaptation,
                     response_log='final_responses.jsonl',
                     history_log='ranker_responses.jsonl')
-    data_adapter.save_results(args, bundle, predictions, failures, 'llmrank', metadata)
+    if score_results:
+        data_adapter.save_results(args, bundle, predictions, failures, method, metadata)
     return metadata
 
 

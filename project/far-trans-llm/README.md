@@ -24,6 +24,9 @@ locally; GitHub displays its source, not a rendered page. No GitHub Pages hostin
 is assumed. Its Markdown companion links are plain text files when opened locally;
 read them on GitHub or with a Markdown viewer.
 
+The Homework 2 [BUY/SELL prompt extension](BUY_SELL_RANKER.md) reuses the ranker
+with the original candidate lists and adds a separate history of SELL events.
+
 ## Dependencies and offline behavior
 
 Use Python 3.12 or a compatible Python 3 environment. Pure-function tests, imports,

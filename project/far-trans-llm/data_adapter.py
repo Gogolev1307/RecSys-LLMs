@@ -8,7 +8,7 @@ import json
 from pathlib import Path
 
 
-def arguments(description):
+def arguments(description, *, model_default=None):
     parser = argparse.ArgumentParser(description=description)
     parser.add_argument('--starter-dir', type=Path,
                         default=Path(__file__).resolve().parent.parent / 'far-trans')
@@ -18,7 +18,8 @@ def arguments(description):
     parser.add_argument('--horizon-days', type=int, default=30)
     parser.add_argument('--max-users', type=int, default=100)
     parser.add_argument('--candidate-count', type=int, default=50)
-    parser.add_argument('--model', required=True, help='Local model directory or cached HF model ID')
+    parser.add_argument('--model', required=model_default is None, default=model_default,
+                        help='Local model directory or cached HF model ID')
     parser.add_argument('--revision', help='Pinned Hugging Face revision; use with a model ID')
     parser.add_argument('--device', choices=['auto', 'cpu', 'cuda'], default='auto')
     parser.add_argument('--allow-download', action='store_true')

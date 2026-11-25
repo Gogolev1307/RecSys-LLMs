@@ -7,8 +7,23 @@ import time
 from pathlib import Path
 
 
+def inference_dtype(torch, device, cuda_dtype):
+    if device != 'cuda':
+        return torch.float32
+    if not torch.cuda.is_available():
+        raise ValueError('CUDA requested but unavailable')
+    if cuda_dtype == 'float16':
+        return torch.float16
+    if cuda_dtype == 'bfloat16':
+        if not torch.cuda.is_bf16_supported(including_emulation=False):
+            raise ValueError('CUDA device lacks native bfloat16; use --cuda-dtype float16 on a T4')
+        return torch.bfloat16
+    raise ValueError(f'Unsupported CUDA dtype: {cuda_dtype}')
+
+
 class LocalGenerator:
-    def __init__(self, model, revision=None, device='auto', allow_download=False):
+    def __init__(self, model, revision=None, device='auto', allow_download=False, *,
+                 cuda_dtype='bfloat16'):
         import torch
         from transformers import AutoModelForCausalLM, AutoTokenizer
         torch.set_num_threads(4)
@@ -16,13 +31,11 @@ class LocalGenerator:
         self.model_id = model
         self.revision = revision
         self.device = ('cuda' if torch.cuda.is_available() else 'cpu') if device == 'auto' else device
-        if self.device == 'cuda' and not torch.cuda.is_available():
-            raise ValueError('CUDA requested but unavailable')
+        dtype = inference_dtype(torch, self.device, cuda_dtype)
         kwargs = {'local_files_only': not allow_download, 'trust_remote_code': False}
         if revision:
             kwargs['revision'] = revision
         self.tokenizer = AutoTokenizer.from_pretrained(model, **kwargs)
-        dtype = torch.bfloat16 if self.device == 'cuda' else torch.float32
         self.model = AutoModelForCausalLM.from_pretrained(model, torch_dtype=dtype, **kwargs)
         self.model.to(self.device).eval()
         import transformers
@@ -32,8 +45,12 @@ class LocalGenerator:
                          'torch_version': torch.__version__,
                          'transformers_version': transformers.__version__,
                          'tokenizer_class': type(self.tokenizer).__name__,
-                         'do_sample': False, 'thinking': False,
-                         'context_limit': 8192}
+                          'do_sample': False, 'thinking': False,
+                          'context_limit': 8192}
+        if self.device == 'cuda':
+            self.metadata.update(cuda_version=torch.version.cuda,
+                                 gpu_name=torch.cuda.get_device_name(),
+                                 gpu_capability=list(torch.cuda.get_device_capability()))
 
     def generate(self, prompt, max_new_tokens=160):
         messages = [{'role': 'user', 'content': prompt}]
